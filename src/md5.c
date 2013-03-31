@@ -1,0 +1,274 @@
+#include "postgres.h"
+#include <string.h>
+#include "fmgr.h"
+#include "access/htup.h"
+
+#ifdef PG_MODULE_MAGIC
+PG_MODULE_MAGIC;
+#endif
+
+#define HASH_BYTES  16
+#define HASH_CHARS  (HASH_BYTES*2)
+#define HASH_LENGTH (HASH_CHARS+1)
+
+PG_FUNCTION_INFO_V1(md5_in);
+PG_FUNCTION_INFO_V1(md5_out);
+
+PG_FUNCTION_INFO_V1(md5_eq);
+PG_FUNCTION_INFO_V1(md5_neq);
+
+PG_FUNCTION_INFO_V1(md5_leq);
+PG_FUNCTION_INFO_V1(md5_lt);
+
+PG_FUNCTION_INFO_V1(md5_geq);
+PG_FUNCTION_INFO_V1(md5_gt);
+PG_FUNCTION_INFO_V1(md5_cmp);
+
+Datum md5_in(PG_FUNCTION_ARGS);
+Datum md5_out(PG_FUNCTION_ARGS);
+
+Datum md5_eq(PG_FUNCTION_ARGS);
+Datum md5_neq(PG_FUNCTION_ARGS);
+
+Datum md5_leq(PG_FUNCTION_ARGS);
+Datum md5_lt(PG_FUNCTION_ARGS);
+
+Datum md5_geq(PG_FUNCTION_ARGS);
+Datum md5_gt(PG_FUNCTION_ARGS);
+
+Datum md5_cmp(PG_FUNCTION_ARGS);
+
+typedef struct hash_t {
+    unsigned char bytes[HASH_BYTES];
+} hash_t;
+
+__inline__ static char * encode(hash_t * h);
+__inline__ static char decode(char byte[2]);
+
+/* encode binary as a hex value */
+__inline__
+static char * encode(hash_t * hash) {
+    
+    int i;
+    static char chars[16] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+    
+    /* 32 chars max (+ a terminator) */
+    char * result = (char *) palloc(HASH_LENGTH);
+    memset(result, 0, HASH_LENGTH);
+    
+    /* first 64 bits */
+    for (i = 0; i < HASH_BYTES; i++) {
+        result[2*i]   = chars[hash->bytes[i] >> 4];
+        result[2*i+1] = chars[hash->bytes[i] & 0x0F];
+    }
+    
+    return result;
+    
+}
+
+__inline__
+static char decode(char byte[2]) {
+    
+    unsigned char result = 0;
+    
+    unsigned char a = toupper(byte[0]);
+    unsigned char b = toupper(byte[1]);
+    
+    if (a >= 48 && a <= 57) {
+        result = 16 * (a - 48);
+    } else {
+        result = 16 * (a - 65 + 10);
+    }
+    
+    if (b >= 48 && b <= 57) {
+        result += (b - 48);
+    } else {
+        result += (b - 65 + 10);
+    }
+    
+    return result;
+    
+}
+
+typedef struct HeapTupleFields
+{
+    TransactionId t_xmin;       /* inserting xact ID */
+    TransactionId t_xmax;       /* deleting or locking xact ID */
+
+    union
+    {
+        CommandId   t_cid;      /* inserting or deleting command ID, or both */
+        TransactionId t_xvac;   /* old-style VACUUM FULL xact ID */
+    }           t_field3;
+} HeapTupleFields;
+
+typedef struct DatumTupleFields
+{
+    int32       datum_len_;     /* varlena header (do not touch directly!) */
+
+    int32       datum_typmod;   /* -1, or identifier of a record type */
+
+    Oid         datum_typeid;   /* composite type OID, or RECORDOID */
+
+    /*
+     * Note: field ordering is chosen with thought that Oid might someday
+     * widen to 64 bits.
+     */
+} DatumTupleFields;
+
+struct HeapTupleHeaderData
+{
+    union
+    {
+        HeapTupleFields t_heap;
+        DatumTupleFields t_datum;
+    }           t_choice;
+
+    ItemPointerData t_ctid;     /* current TID of this or newer tuple */
+
+    /* Fields below here must match MinimalTupleData! */
+
+    uint16      t_infomask2;    /* number of attributes + various flags */
+
+    uint16      t_infomask;     /* various flag bits, see below */
+
+    uint8       t_hoff;         /* sizeof header incl. bitmap, padding */
+
+    /* ^ - 23 bytes - ^ */
+
+    bits8       t_bits[1];      /* bitmap of NULLs -- VARIABLE LENGTH */
+
+    /* MORE DATA FOLLOWS AT END OF STRUCT */
+};
+
+Datum
+md5_in(PG_FUNCTION_ARGS)
+{
+    int     i = 0;
+    char  *str = PG_GETARG_CSTRING(0);
+    
+    /* 128bit = 2x 64bit */
+    hash_t * result = (hash_t *)palloc(sizeof(hash_t));
+    
+    if (strlen(str) != 32)
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                 errmsg("invalid input length for hash: \"%s\" (expected 32 chars)",
+                        str)));
+    
+    for (i = 0; i < 32; i++) {
+        char c = toupper(str[i]);
+        if (! ((c >= 48 && c <= 57) || (c >= 65 && c <= 70))) {
+            ereport(ERROR,
+                (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                 errmsg("invalid character: \"%c\" (expected 0-9, A-F)", c)));
+        }
+    }
+    
+    /* first half (64 bits = 8 pairs) */
+    for (i = 0; i < HASH_BYTES; i++) {
+        result->bytes[i] = decode(&str[2*i]);
+    }
+    
+    PG_RETURN_POINTER(result);
+}
+
+Datum
+md5_out(PG_FUNCTION_ARGS)
+{
+    hash_t *hash = (hash_t *) PG_GETARG_POINTER(0);
+    char *result = encode(hash);
+    
+    PG_RETURN_CSTRING(result);
+}
+
+Datum
+md5_eq(PG_FUNCTION_ARGS)
+{
+    
+    hash_t * a = (hash_t *) PG_GETARG_POINTER(0);
+    hash_t * b = (hash_t *) PG_GETARG_POINTER(1);
+    
+    int r = memcmp(a->bytes,b->bytes,HASH_BYTES);
+    
+    PG_RETURN_BOOL(r == 0);
+    
+}
+
+Datum
+md5_neq(PG_FUNCTION_ARGS)
+{
+    
+    hash_t * a = (hash_t *) PG_GETARG_POINTER(0);
+    hash_t * b = (hash_t *) PG_GETARG_POINTER(1);
+    
+    int r = memcmp(a->bytes,b->bytes,HASH_BYTES);
+    
+    PG_RETURN_BOOL(r != 0);
+    
+}
+
+Datum
+md5_leq(PG_FUNCTION_ARGS)
+{
+    
+    hash_t * a = (hash_t *) PG_GETARG_POINTER(0);
+    hash_t * b = (hash_t *) PG_GETARG_POINTER(1);
+    
+    int r = memcmp(a->bytes,b->bytes,HASH_BYTES);
+    
+    PG_RETURN_BOOL(r <= 0);
+    
+}
+
+Datum
+md5_lt(PG_FUNCTION_ARGS)
+{
+    
+    hash_t * a = (hash_t *) PG_GETARG_POINTER(0);
+    hash_t * b = (hash_t *) PG_GETARG_POINTER(1);
+    
+    int r = memcmp(a->bytes,b->bytes,HASH_BYTES);
+    
+    PG_RETURN_BOOL(r < 0);
+    
+}
+
+Datum
+md5_geq(PG_FUNCTION_ARGS)
+{
+    
+    hash_t * a = (hash_t *) PG_GETARG_POINTER(0);
+    hash_t * b = (hash_t *) PG_GETARG_POINTER(1);
+    
+    int r = memcmp(a->bytes,b->bytes,HASH_BYTES);
+    
+    PG_RETURN_BOOL(r >= 0);
+    
+}
+
+Datum
+md5_gt(PG_FUNCTION_ARGS)
+{
+    
+    hash_t * a = (hash_t *) PG_GETARG_POINTER(0);
+    hash_t * b = (hash_t *) PG_GETARG_POINTER(1);
+    
+    int r = memcmp(a->bytes,b->bytes,HASH_BYTES);
+    
+    PG_RETURN_BOOL(r > 0);
+    
+}
+
+Datum
+md5_cmp(PG_FUNCTION_ARGS)
+{
+    
+    hash_t * a = (hash_t *) PG_GETARG_POINTER(0);
+    hash_t * b = (hash_t *) PG_GETARG_POINTER(1);
+    
+    int r = memcmp(a->bytes,b->bytes,HASH_BYTES);
+    
+    PG_RETURN_INT32(r);
+    
+}
