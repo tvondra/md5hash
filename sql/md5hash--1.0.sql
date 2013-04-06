@@ -13,11 +13,15 @@ CREATE FUNCTION md5_geq(md5hash, md5hash) RETURNS boolean AS 'md5hash' LANGUAGE 
 CREATE FUNCTION md5_gt(md5hash, md5hash)  RETURNS boolean AS 'md5hash' LANGUAGE C IMMUTABLE STRICT;
 CREATE FUNCTION md5_cmp(md5hash, md5hash) RETURNS int     AS 'md5hash' LANGUAGE C IMMUTABLE STRICT;
 
--- a fixed-length 128-bit hash type
+CREATE FUNCTION md5_recv(internal)        RETURNS md5hash AS 'md5hash' LANGUAGE C IMMUTABLE STRICT;
+CREATE FUNCTION md5_send(md5hash)         RETURNS bytea   AS 'md5hash' LANGUAGE C IMMUTABLE STRICT;
+
 CREATE TYPE md5hash (
     INPUT = md5_in,
     OUTPUT = md5_out,
-    INTERNALLENGTH = 16
+    INTERNALLENGTH = 16,
+    SEND = md5_send,
+    RECEIVE = md5_recv
 );
 
 -- some basic support for implicit casts

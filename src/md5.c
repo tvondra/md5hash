@@ -3,6 +3,9 @@
 #include "fmgr.h"
 #include "access/htup.h"
 
+#include "lib/stringinfo.h"
+#include "libpq/pqformat.h"
+
 #ifdef PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
 #endif
@@ -13,6 +16,9 @@ PG_MODULE_MAGIC;
 
 PG_FUNCTION_INFO_V1(md5_in);
 PG_FUNCTION_INFO_V1(md5_out);
+
+PG_FUNCTION_INFO_V1(md5_recv);
+PG_FUNCTION_INFO_V1(md5_send);
 
 PG_FUNCTION_INFO_V1(md5_eq);
 PG_FUNCTION_INFO_V1(md5_neq);
@@ -37,6 +43,9 @@ Datum md5_geq(PG_FUNCTION_ARGS);
 Datum md5_gt(PG_FUNCTION_ARGS);
 
 Datum md5_cmp(PG_FUNCTION_ARGS);
+
+Datum md5_recv(PG_FUNCTION_ARGS);
+Datum md5_send(PG_FUNCTION_ARGS);
 
 typedef struct hash_t {
     unsigned char bytes[HASH_BYTES];
@@ -271,4 +280,26 @@ md5_cmp(PG_FUNCTION_ARGS)
     
     PG_RETURN_INT32(r);
     
+}
+
+Datum
+md5_recv(PG_FUNCTION_ARGS)
+{
+    StringInfo  buf = (StringInfo) PG_GETARG_POINTER(0);
+    hash_t * result;
+
+    result = (hash_t *) palloc(sizeof(hash_t));
+    pq_copymsgbytes(buf, (char*)result->bytes, HASH_BYTES);
+    PG_RETURN_POINTER(result);
+}
+
+Datum
+md5_send(PG_FUNCTION_ARGS)
+{
+    hash_t * hash = (hash_t*) PG_GETARG_POINTER(0);
+    StringInfoData buf;
+
+    pq_begintypsend(&buf);
+    pq_sendbytes(&buf, (char*)hash->bytes, HASH_BYTES);
+    PG_RETURN_BYTEA_P(pq_endtypsend(&buf));
 }
