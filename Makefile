@@ -1,5 +1,5 @@
 MODULE_big = md5hash
-OBJS = src/md5.o
+OBJS = md5hash.o
 
 EXTENSION = md5hash
 DATA = sql/md5hash--1.0.0.sql
@@ -14,7 +14,3 @@ REGRESS_OPTS = --inputdir=test
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
-
-md5hash.so: src/md5.o
-
-src/md5.o: src/md5.c
