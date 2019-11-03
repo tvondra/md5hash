@@ -3,7 +3,7 @@
    "abstract": "Efficient inline storage of 128-bit binary data (e.g. MD5 hashes).",
    "description": "The usual way to store MD5 hashes is in varlena columns (e.g. TEXT), which occupies unnecessary amount of data (over 32B for 16B of data). This extension defines a native 16-byte data 
 type, stored inline, allowing more efficient storage etc. which is especially useful for hashes used as identifiers.",
-   "version": "1.0",
+   "version": "1.0.0",
    "maintainer": "Tomas Vondra <tv@fuzzy.cz>",
    "license": "bsd",
    "prereqs": {
@@ -15,9 +15,9 @@ type, stored inline, allowing more efficient storage etc. which is especially us
    },
    "provides": {
      "md5hash": {
-       "file": "sql/md5hash--1.0.sql",
+       "file": "sql/md5hash--1.0.0.sql",
        "docfile" : "README.md",
-       "version": "1.0"
+       "version": "1.0.0"
      }
    },
    "resources": {
