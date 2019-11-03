@@ -25,7 +25,7 @@ and you're done. You may also install the extension manually:
 And if you're on an older version (pre-9.1), you have to run the SQL
 script manually
 
-    $ psql dbname < `pg_config --sharedir`/contrib/md5hash--1.0.0.sql
+    $ psql dbname < `pg_config --sharedir`/contrib/md5hash--1.0.1.sql
 
 That's all you need to do.
 
