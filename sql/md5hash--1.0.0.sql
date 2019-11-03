@@ -74,7 +74,7 @@ CREATE OPERATOR <= (
     PROCEDURE = md5_leq,
     LEFTARG = md5hash,
     RIGHTARG = md5hash,
-    COMMUTATOR = =>,
+    COMMUTATOR = >=,
     NEGATOR = >,
     RESTRICT = scalarltsel,
     JOIN = scalarltjoinsel
