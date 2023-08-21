@@ -17,11 +17,10 @@ PG_MODULE_MAGIC;
 #endif
 
 #define HASH_BYTES 16
-#define HASH_CHARS (HASH_BYTES * 2)
+#define HASH_CHARS 22 // urlsafe base64 编码
 #define HASH_LENGTH (HASH_CHARS + 1)
 
 PG_FUNCTION_INFO_V1(md5_bytea_in);
-PG_FUNCTION_INFO_V1(md5_bytea_out);
 
 PG_FUNCTION_INFO_V1(md5_in);
 PG_FUNCTION_INFO_V1(md5_out);
@@ -56,8 +55,7 @@ Datum md5_cmp(PG_FUNCTION_ARGS);
 Datum md5_recv(PG_FUNCTION_ARGS);
 Datum md5_send(PG_FUNCTION_ARGS);
 
-typedef struct hash_t
-{
+typedef struct hash_t {
   unsigned char bytes[HASH_BYTES];
 } hash_t;
 
@@ -66,25 +64,32 @@ __inline__ static char decode(char byte[2]);
 
 /* encode binary value (unsigned char) as a hex value */
 
-__inline__ static char*
-encode(hash_t* hash)
+__inline__ static char* encode(hash_t* hash)
 {
   int i;
-  static char chars[16] = { '0', '1', '2', '3', '4', '5', '6', '7',
-                            '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'
-                          };
+  static char chars[64] = { 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+    'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f',
+    'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
+    'w', 'x', 'y', 'z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-', '_' };
 
-  /* 32 chars max (+ a terminator) */
+  /* 22 chars max (+ a terminator) */
   char* result = (char*)palloc(HASH_LENGTH);
 
   memset(result, 0, HASH_LENGTH);
 
   /* first 64 bits */
-  for (i = 0; i < HASH_BYTES; i++)
-  {
-    result[2 * i] = chars[hash->bytes[i] >> 4];
-    result[2 * i + 1] = chars[hash->bytes[i] & 0x0F];
+  int j = 0;
+  for (i = 0; i < 15; i += 3) {
+    uint32_t triplet = (hash->bytes[i] << 16) | (hash->bytes[i + 1] << 8) | hash->bytes[i + 2];
+    result[j++] = chars[(triplet >> 18) & 0x3F];
+    result[j++] = chars[(triplet >> 12) & 0x3F];
+    result[j++] = chars[(triplet >> 6) & 0x3F];
+    result[j++] = chars[triplet & 0x3F];
   }
+
+  uint32_t triplet = (hash->bytes[i] << 16);
+  result[j++] = chars[(triplet >> 18) & 0x3F];
+  result[j++] = chars[(triplet >> 12) & 0x3F];
 
   return result;
 }
@@ -111,6 +116,39 @@ decode(char byte[2])
   return result;
 }
 
+// 将字符转换成对应的数字
+int char_to_num(char c)
+{
+  if (c >= 'A' && c <= 'Z')
+    return c - 'A';
+  else if (c >= 'a' && c <= 'z')
+    return c - 'a' + 26;
+  else if (c >= '0' && c <= '9')
+    return c - '0' + 52;
+  else if (c == '-')
+    return 62;
+  else if (c == '_')
+    return 63;
+  else
+    return -1;
+}
+
+// 对一个22字节的urlsafe base64字符串进行解码
+void urlsafe_base64_decode(const char* src, unsigned char* dst)
+{
+  int i, j, s[4];
+  for (i = 0, j = 0; i < 22; i += 4, j += 3) {
+    s[0] = char_to_num(src[i]);
+    s[1] = char_to_num(src[i + 1]);
+    s[2] = char_to_num(src[i + 2]);
+    s[3] = char_to_num(src[i + 3]);
+
+    dst[j] = (s[0] << 2) | (s[1] >> 4);
+    dst[j + 1] = (s[1] << 4) | (s[2] >> 2);
+    dst[j + 2] = (s[2] << 6) | s[3];
+  }
+}
+
 Datum md5_in(PG_FUNCTION_ARGS)
 {
   int i = 0;
@@ -119,20 +157,26 @@ Datum md5_in(PG_FUNCTION_ARGS)
   /* 128bit = 2x 64bit */
   hash_t* result = (hash_t*)palloc(sizeof(hash_t));
 
-  if (strlen(str) != 32)
-    ereport(ERROR,
-            (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-             errmsg("invalid input length for hash: \"%s\" (expected 32 chars)",
-                    str)));
-
-  for (i = 0; i < 32; i++)
+  auto len = strlen(str);
+  if (len == 22) // base64url encode
   {
+    urlsafe_base64_decode(str, result->bytes);
+    PG_RETURN_POINTER(result);
+  }
+
+  if (len != 32)
+    ereport(ERROR,
+        (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+            errmsg("invalid input length for hash: \"%s\" , expected 22 chars (base64url) or 32 chars (hex)",
+                str)));
+
+  for (i = 0; i < 32; i++) {
     char c = toupper(str[i]);
 
     if (!((c >= 48 && c <= 57) || (c >= 65 && c <= 70)))
       ereport(ERROR,
-              (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-               errmsg("invalid character: \"%c\" (expected 0-9, A-F)", c)));
+          (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+              errmsg("invalid character: \"%c\" (expected 0-9, A-F)", c)));
   }
 
   /* first half (64 bits = 8 pairs) */
@@ -249,8 +293,8 @@ Datum md5_bytea_in(PG_FUNCTION_ARGS)
   size_t data_length = VARSIZE_ANY_EXHDR(data);
   if (data_length != HASH_BYTES)
     ereport(ERROR,
-            (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-             errmsg("invalid input length for hash: expected %d , get %ld", HASH_BYTES, data_length)));
+        (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+            errmsg("invalid input length for hash: expected %d , get %ld", HASH_BYTES, data_length)));
 
   memcpy(result->bytes, data->vl_dat, HASH_BYTES);
 
