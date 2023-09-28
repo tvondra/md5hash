@@ -4,8 +4,9 @@
  * Copyright (C) Tomas Vondra, 2011
  */
 
-#include "postgres.h"
+#include <postgres.h>
 #include <string.h>
+#include <varatt.h>
 
 #include "access/htup.h"
 #include "fmgr.h"
